@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Preview</title>
+<style>
+body{margin:0;min-height:90vh;display:flex;align-items:center;justify-content:center;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:#222;background:#fff}
+#box{max-width:440px;padding:24px;text-align:center}#m{color:#555}#f{display:none;margin-top:14px}
+input{width:100%;box-sizing:border-box;padding:9px 11px;font:inherit;border:1px solid #ccc;border-radius:8px}
+button{margin-top:10px;padding:8px 18px;font:inherit;border:0;border-radius:8px;background:#2c6e8f;color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="box"><div id="m">Loading&hellip;</div><form id="f"><input id="k" autocomplete="off" spellcheck="false" placeholder="Access code"><button type="submit">Open</button></form></div>
+<script>
+(function () {
+  'use strict';
+  var m = document.getElementById('m'), f = document.getElementById('f'), SK = 'pv-key', buf = null;
+  function pick(s) { var r = /(?:^|[#&?\s])k=([A-Za-z0-9]{4,32})/.exec('#' + (s || '')); return r ? r[1].toLowerCase() : null; }
+  function ask(msg) { m.textContent = msg; f.style.display = 'block'; }
+  function stored() { try { return sessionStorage.getItem(SK); } catch (e) { return null; } }
+  function load() {
+    if (buf) return Promise.resolve(buf);
+    return fetch('p.bin', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('fetch ' + r.status); return r.arrayBuffer();
+    }).then(function (ab) { buf = new Uint8Array(ab); return buf; });
+  }
+  function show(pt, key) {
+    var dv = new DataView(pt.buffer, pt.byteOffset, pt.byteLength);
+    if (new TextDecoder().decode(pt.subarray(0, 4)) !== 'PVB1') throw new Error('format');
+    var hl = dv.getUint32(4), hdr = JSON.parse(new TextDecoder().decode(pt.subarray(8, 8 + hl))), base = 8 + hl, html = hdr.html;
+    hdr.files.forEach(function (x) {
+      var u = URL.createObjectURL(new Blob([pt.subarray(base + x.o, base + x.o + x.n)], { type: x.t }));
+      html = html.split('"' + x.p + '"').join('"' + u + '"');
+    });
+    try { sessionStorage.setItem(SK, key); } catch (e) {}
+    document.open(); document.write(html); document.close();
+  }
+  function open1(key) {
+    if (!key) { ask('This is a private preview. Please open it with the full link, or enter the access code.'); return; }
+    if (!(window.crypto && crypto.subtle && window.TextDecoder)) { m.textContent = 'This browser cannot open the preview. Please try a recent Chrome, Edge, Safari or Firefox.'; return; }
+    m.textContent = 'Loading…'; f.style.display = 'none';
+    load().then(function (b) {
+      if (new TextDecoder().decode(b.subarray(0, 4)) !== 'PV2\u0000') throw new Error('format');
+      var it = new DataView(b.buffer, b.byteOffset, b.byteLength).getUint32(20), enc = new TextEncoder();
+      return crypto.subtle.importKey('raw', enc.encode(key), 'PBKDF2', false, ['deriveKey']).then(function (base) {
+        return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b.subarray(4, 20), iterations: it, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      }).then(function (ck) {
+        return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.subarray(24, 36), additionalData: enc.encode('PV2') }, ck, b.subarray(36));
+      });
+    }).then(function (pt) { show(new Uint8Array(pt), key); }).catch(function (e) {
+      try { sessionStorage.removeItem(SK); } catch (x) {}
+      if (/fetch/.test(String(e && e.message))) { m.textContent = 'The page could not be loaded. Please refresh.'; return; }
+      ask('The access code does not match. Please enter it again, or open the full link.');
+    });
+  }
+  f.addEventListener('submit', function (e) {
+    e.preventDefault(); var v = document.getElementById('k').value.trim(), k = pick(v) || (/^[A-Za-z0-9]{4,32}$/.test(v) ? v.toLowerCase() : null);
+    if (k) { history.replaceState(null, '', '#k=' + k); open1(k); } else ask('That does not look like an access code.');
+  });
+  open1(pick(location.hash.slice(1)) || stored());
+})();
+</script>
+</body>
+</html>
